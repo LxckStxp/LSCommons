@@ -1,3 +1,9 @@
+------------------------------------------------------------
+-- LSCommons.lua
+-- Version: 1.1
+-- Utility functions for Roblox game development
+------------------------------------------------------------
+
 local Commons = {}
 
 -- Services
@@ -8,8 +14,7 @@ local RunService = game:GetService("RunService")
 -- Player Utilities
 ------------------------------------------------------------
 Commons.Players = {
-    -- Return the player associated with a given character or instance,
-    -- or nil if not found.
+    -- Return the player associated with a given character or instance, or nil if not found.
     getPlayerFromInstance = function(instance)
         if not instance then
             return nil
@@ -52,6 +57,26 @@ Commons.Players = {
             return 0, 0
         end
         return math.floor(character.Humanoid.Health), math.floor(character.Humanoid.MaxHealth)
+    end,
+    
+    -- Returns the character for a given entity.
+    -- If the entity is a Player, returns its Character.
+    -- Otherwise, assumes the entity is a model representing an NPC and returns the entity.
+    getCharacterFromEntity = function(entity)
+        if typeof(entity) == "Instance" and entity:IsA("Player") then
+            return entity.Character
+        else
+            return entity
+        end
+    end,
+    
+    -- Returns the Humanoid instance from the entity (player or NPC).
+    getHumanoidFromEntity = function(entity)
+        local character = Commons.Players.getCharacterFromEntity(entity)
+        if character then
+            return character:FindFirstChild("Humanoid")
+        end
+        return nil
     end
 }
 
@@ -111,7 +136,6 @@ Commons.Visual = {
 ------------------------------------------------------------
 -- Instance Utilities
 ------------------------------------------------------------
-
 Commons.Instance = {
     -- Destroys an instance safely if it exists.
     destroy = function(instance)
