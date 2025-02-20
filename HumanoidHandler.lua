@@ -1,10 +1,9 @@
 --[[
     HumanoidHandler Module
     Part of LSCommons Library
-    Version: 1.0
+    Version: 1.1
     
-    Efficient player and NPC detection/storage system
-    with automatic cache management and validation
+    Core humanoid tracking and management system
 ]]
 
 local HumanoidHandler = {}
@@ -20,45 +19,60 @@ local Cache = {
     Players = {},
     NPCs = {},
     LastUpdate = 0,
-    UpdateInterval = 0.5, -- Half second refresh rate
+    UpdateInterval = 0.5,
     Connections = {}
 }
 
--- Validation Functions
+-- Core Validation
 function HumanoidHandler.isValidHumanoid(model)
     if not model then return false end
     
     local humanoid = model:FindFirstChild("Humanoid")
-    if not humanoid or not humanoid:IsA("Humanoid") then return false end
-    
-    return humanoid.Health > 0 
+    return humanoid 
+        and humanoid:IsA("Humanoid")
+        and humanoid.Health > 0 
         and model:FindFirstChild("Head") 
         and model:FindFirstChild("HumanoidRootPart")
 end
 
-function HumanoidHandler.getHumanoidName(model)
+-- Humanoid Information
+function HumanoidHandler.getHumanoidInfo(model)
+    if not model then return nil end
+    
     local humanoid = model:FindFirstChild("Humanoid")
     if not humanoid then return nil end
-    return humanoid.DisplayName ~= "" and humanoid.DisplayName or humanoid.Name
+    
+    return {
+        Instance = humanoid,
+        Health = humanoid.Health,
+        MaxHealth = humanoid.MaxHealth,
+        DisplayName = humanoid.DisplayName ~= "" and humanoid.DisplayName or humanoid.Name,
+        WalkSpeed = humanoid.WalkSpeed,
+        JumpPower = humanoid.JumpPower
+    }
 end
 
 -- Player Management
 function HumanoidHandler.setupPlayerTracking()
-    -- Clear existing player cache
     table.clear(Cache.Players)
     
     -- Add existing players
     for _, player in ipairs(Services.Players:GetPlayers()) do
-        Cache.Players[player.Name] = player
+        if player.Character and HumanoidHandler.isValidHumanoid(player.Character) then
+            Cache.Players[player.Name] = player.Character
+        end
     end
     
-    -- Track new players
-    Cache.Connections.PlayerAdded = Services.Players.PlayerAdded:Connect(function(player)
-        Cache.Players[player.Name] = player
+    -- Track character changes
+    Cache.Connections.CharacterAdded = Services.Players.PlayerAdded:Connect(function(player)
+        player.CharacterAdded:Connect(function(character)
+            if HumanoidHandler.isValidHumanoid(character) then
+                Cache.Players[player.Name] = character
+            end
+        end)
     end)
     
-    -- Remove leaving players
-    Cache.Connections.PlayerRemoving = Services.Players.PlayerRemoving:Connect(function(player)
+    Cache.Connections.CharacterRemoving = Services.Players.PlayerRemoving:Connect(function(player)
         Cache.Players[player.Name] = nil
     end)
 end
@@ -78,10 +92,11 @@ function HumanoidHandler.updateNPCCache()
             local model = instance.Parent
             
             -- Validate and ensure it's not a player
-            if HumanoidHandler.isValidHumanoid(model) and not Services.Players:GetPlayerFromCharacter(model) then
-                local npcName = HumanoidHandler.getHumanoidName(model)
-                if npcName then
-                    newCache[npcName] = model
+            if HumanoidHandler.isValidHumanoid(model) 
+            and not Services.Players:GetPlayerFromCharacter(model) then
+                local info = HumanoidHandler.getHumanoidInfo(model)
+                if info then
+                    newCache[info.DisplayName] = model
                 end
             end
         end
@@ -93,72 +108,43 @@ function HumanoidHandler.updateNPCCache()
 end
 
 -- Public Interface
-function HumanoidHandler.getPlayers()
-    local players = {}
-    for _, player in pairs(Cache.Players) do
-        if player.Character and HumanoidHandler.isValidHumanoid(player.Character) then
-            table.insert(players, player)
+function HumanoidHandler.getValidPlayers()
+    local valid = {}
+    for name, character in pairs(Cache.Players) do
+        if HumanoidHandler.isValidHumanoid(character) then
+            table.insert(valid, character)
         end
     end
-    return players
+    return valid
 end
 
-function HumanoidHandler.getNPCs()
+function HumanoidHandler.getValidNPCs()
     return HumanoidHandler.updateNPCCache()
 end
 
-function HumanoidHandler.getAllHumanoids()
+function HumanoidHandler.getAllValidHumanoids()
     local humanoids = {}
     
     -- Add valid players
-    for _, player in pairs(HumanoidHandler.getPlayers()) do
-        table.insert(humanoids, player.Character)
+    for _, character in pairs(HumanoidHandler.getValidPlayers()) do
+        table.insert(humanoids, character)
     end
     
     -- Add NPCs
-    for _, npc in pairs(HumanoidHandler.getNPCs()) do
+    for _, npc in pairs(HumanoidHandler.getValidNPCs()) do
         table.insert(humanoids, npc)
     end
     
     return humanoids
 end
 
--- Utility Functions
-function HumanoidHandler.getClosestHumanoid(position, maxDistance)
-    maxDistance = maxDistance or math.huge
-    local closest = nil
-    local shortestDistance = maxDistance
+-- Distance Utilities
+function HumanoidHandler.getHumanoidDistance(model1, model2)
+    if not (model1 and model2) then return math.huge end
     
-    for _, model in ipairs(HumanoidHandler.getAllHumanoids()) do
-        local distance = (position - model:GetPivot().Position).Magnitude
-        if distance < shortestDistance then
-            closest = model
-            shortestDistance = distance
-        end
-    end
-    
-    return closest, shortestDistance
-end
-
-function HumanoidHandler.getHumanoidsInRadius(position, radius)
-    local inRadius = {}
-    
-    for _, model in ipairs(HumanoidHandler.getAllHumanoids()) do
-        local distance = (position - model:GetPivot().Position).Magnitude
-        if distance <= radius then
-            table.insert(inRadius, {
-                Model = model,
-                Distance = distance
-            })
-        end
-    end
-    
-    -- Sort by distance
-    table.sort(inRadius, function(a, b)
-        return a.Distance < b.Distance
-    end)
-    
-    return inRadius
+    local pos1 = model1:GetPivot().Position
+    local pos2 = model2:GetPivot().Position
+    return (pos1 - pos2).Magnitude
 end
 
 -- Debug Functions
@@ -166,33 +152,35 @@ function HumanoidHandler.debugPrint()
     print("=== HumanoidHandler Debug ===")
     
     -- Player info
-    local players = HumanoidHandler.getPlayers()
+    local players = HumanoidHandler.getValidPlayers()
     print(string.format("Active Players: %d", #players))
-    for _, player in ipairs(players) do
-        print(string.format("Player: %s (Character: %s)", 
-            player.Name,
-            player.Character and "Valid" or "Invalid"
+    for _, character in ipairs(players) do
+        local info = HumanoidHandler.getHumanoidInfo(character)
+        print(string.format("Player: %s (Health: %d/%d)", 
+            info.DisplayName,
+            info.Health,
+            info.MaxHealth
         ))
     end
     
     -- NPC info
-    local npcs = HumanoidHandler.getNPCs()
+    local npcs = HumanoidHandler.getValidNPCs()
     local npcCount = 0
     print("\nActive NPCs:")
-    for name, model in pairs(npcs) do
+    for _, npc in pairs(npcs) do
         npcCount = npcCount + 1
-        local humanoid = model:FindFirstChild("Humanoid")
+        local info = HumanoidHandler.getHumanoidInfo(npc)
         print(string.format("NPC: %s (Health: %d/%d)", 
-            name,
-            humanoid.Health,
-            humanoid.MaxHealth
+            info.DisplayName,
+            info.Health,
+            info.MaxHealth
         ))
     end
     print(string.format("Total NPCs: %d", npcCount))
     print("=========================")
 end
 
--- Initialize the handler
+-- Initialize
 function HumanoidHandler.init()
     HumanoidHandler.setupPlayerTracking()
     
@@ -202,7 +190,7 @@ function HumanoidHandler.init()
     end)
 end
 
--- Cleanup function
+-- Cleanup
 function HumanoidHandler.cleanup()
     for _, connection in pairs(Cache.Connections) do
         connection:Disconnect()
