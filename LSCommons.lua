@@ -1,7 +1,7 @@
 --[[
     LSCommons Library
-    Version: 1.2
-    Core utility functions for Roblox exploiting
+    Version: 1.3
+    Core utility functions for Roblox exploiting with advanced detection
 ]]
 
 local Commons = {}
@@ -11,7 +11,8 @@ local Services = {
     Players = game:GetService("Players"),
     RunService = game:GetService("RunService"),
     TweenService = game:GetService("TweenService"),
-    UserInputService = game:GetService("UserInputService")
+    UserInputService = game:GetService("UserInputService"),
+    Camera = workspace.CurrentCamera
 }
 
 -- Load Dependencies
@@ -44,23 +45,16 @@ Commons.Players = {
         return character and character:FindFirstChild("Humanoid")
     end,
     
-    -- Check if entity is alive
+    -- Check if entity is alive (aligned with HumanoidHandler)
     isAlive = function(character)
-        if not character then return false end
-        
-        local humanoid = character:FindFirstChild("Humanoid")
-        return humanoid 
-            and humanoid.Health > 0 
-            and character:FindFirstChild("Head")
-            and character:FindFirstChild("HumanoidRootPart")
+        return HumanoidHandler.isValidHumanoid(character)
     end,
     
     -- Get health information
     getHealthInfo = function(character)
-        local humanoid = character and character:FindFirstChild("Humanoid")
-        if not humanoid then return 0, 0 end
-        
-        return math.floor(humanoid.Health), math.floor(humanoid.MaxHealth)
+        local info = HumanoidHandler.getHumanoidInfo(character)
+        if not info then return 0, 0 end
+        return math.floor(info.Health), math.floor(info.MaxHealth)
     end,
     
     -- Check team relationship
@@ -70,29 +64,51 @@ Commons.Players = {
         return player1.Team == player2.Team
     end,
     
-    -- Get all valid players
+    -- Get all valid players (updated to match HumanoidHandler)
     getValidPlayers = function()
-        return HumanoidHandler.getPlayers()
+        return HumanoidHandler.getValidPlayers()
     end,
     
-    -- Get all valid NPCs
+    -- Get all valid NPCs (updated to match HumanoidHandler)
     getValidNPCs = function()
-        return HumanoidHandler.getNPCs()
+        return HumanoidHandler.getValidNPCs()
     end,
     
-    -- Get all valid humanoids
+    -- Get all valid humanoids (updated to match HumanoidHandler)
     getAllValidHumanoids = function()
-        return HumanoidHandler.getAllHumanoids()
+        return HumanoidHandler.getAllValidHumanoids()
     end,
     
     -- Get closest humanoid to a position
     getClosestHumanoid = function(position, maxDistance)
-        return HumanoidHandler.getClosestHumanoid(position, maxDistance)
+        local closest = nil
+        local minDist = maxDistance or math.huge
+        
+        for _, humanoid in pairs(HumanoidHandler.getAllValidHumanoids()) do
+            local dist = Commons.Math.getDistance(position, humanoid:GetPivot().Position)
+            if dist < minDist then
+                minDist = dist
+                closest = humanoid
+            end
+        end
+        return closest, minDist
     end,
     
     -- Get humanoids within radius
     getHumanoidsInRadius = function(position, radius)
-        return HumanoidHandler.getHumanoidsInRadius(position, radius)
+        local inRadius = {}
+        for _, humanoid in pairs(HumanoidHandler.getAllValidHumanoids()) do
+            if Commons.Math.getDistance(position, humanoid:GetPivot().Position) <= radius then
+                table.insert(inRadius, humanoid)
+            end
+        end
+        return inRadius
+    end,
+    
+    -- Get player velocity (new utility for prediction)
+    getPlayerVelocity = function(character)
+        local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+        return rootPart and rootPart.Velocity or Vector3.new(0, 0, 0)
     end
 }
 
@@ -131,6 +147,11 @@ Commons.Math = {
     -- Get direction to target
     getDirection = function(from, to)
         return (to - from).Unit
+    end,
+    
+    -- Predict position based on velocity (new utility)
+    predictPosition = function(position, velocity, time)
+        return position + velocity * time
     end
 }
 
@@ -164,8 +185,14 @@ Commons.Visual = {
     
     -- Check if position is visible on screen
     isOnScreen = function(position)
-        local _, onScreen = workspace.CurrentCamera:WorldToScreenPoint(position)
+        local _, onScreen = Services.Camera:WorldToViewportPoint(position)
         return onScreen
+    end,
+    
+    -- Convert world to screen position (new utility)
+    worldToScreen = function(position)
+        local screenPos, onScreen = Services.Camera:WorldToViewportPoint(position)
+        return Vector2.new(screenPos.X, screenPos.Y), onScreen
     end
 }
 
