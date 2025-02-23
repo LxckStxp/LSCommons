@@ -1,9 +1,9 @@
 --[[
     HumanoidHandler Module
     Part of LSCommons Library
-    Version: 1.1
+    Version: 1.2
     
-    Core humanoid tracking and management system
+    Core humanoid tracking and management system with advanced detection
 ]]
 
 local HumanoidHandler = {}
@@ -11,7 +11,8 @@ local HumanoidHandler = {}
 -- Services
 local Services = {
     Players = game:GetService("Players"),
-    RunService = game:GetService("RunService")
+    RunService = game:GetService("RunService"),
+    Camera = workspace.CurrentCamera
 }
 
 -- Cache System
@@ -52,14 +53,82 @@ function HumanoidHandler.getHumanoidInfo(model)
     }
 end
 
+-- Advanced Player Detection
+local function DetectPlayers()
+    local potentialPlayers = {}
+    local ignoreList = {Services.Players.LocalPlayer}
+    local localChar = Services.Players.LocalPlayer.Character or Instance.new("Model")
+
+    -- Method 1: Standard Player Service Check
+    for _, player in pairs(Services.Players:GetPlayers()) do
+        if player ~= Services.Players.LocalPlayer and player.Character then
+            if HumanoidHandler.isValidHumanoid(player.Character) then
+                table.insert(potentialPlayers, player.Character)
+            end
+        end
+    end
+
+    -- Method 2: Raycast-Based Detection
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+    raycastParams.FilterDescendantsInstances = {localChar}
+    
+    for angle = 0, 360, 15 do
+        local direction = (Services.Camera.CFrame * CFrame.Angles(0, math.rad(angle), 0)).LookVector
+        local rayResult = workspace:Raycast(Services.Camera.CFrame.Position, direction * 500, raycastParams)
+        
+        if rayResult and rayResult.Instance then
+            local model = rayResult.Instance:FindFirstAncestorOfClass("Model")
+            if model and HumanoidHandler.isValidHumanoid(model) then
+                local player = Services.Players:GetPlayerFromCharacter(model)
+                if player and not table.find(potentialPlayers, model) and not table.find(ignoreList, player) then
+                    table.insert(potentialPlayers, model)
+                end
+            end
+        end
+    end
+
+    -- Method 3: Proximity-Based Detection via FindPartsInRegion3
+    local region = Region3.new(
+        Services.Camera.CFrame.Position - Vector3.new(50, 50, 50),
+        Services.Camera.CFrame.Position + Vector3.new(50, 50, 50)
+    )
+    local parts = workspace:FindPartsInRegion3WithIgnoreList(region, {localChar}, 100)
+    
+    for _, part in pairs(parts) do
+        local model = part:FindFirstAncestorOfClass("Model")
+        if model and HumanoidHandler.isValidHumanoid(model) then
+            local player = Services.Players:GetPlayerFromCharacter(model)
+            if player and not table.find(potentialPlayers, model) and not table.find(ignoreList, player) then
+                table.insert(potentialPlayers, model)
+            end
+        end
+    end
+
+    -- Method 4: Camera Obscuring Check
+    local obscuringParts = Services.Camera:GetPartsObscuringTarget({Services.Camera.CFrame.Position}, {localChar})
+    for _, part in pairs(obscuringParts) do
+        local model = part:FindFirstAncestorOfClass("Model")
+        if model and HumanoidHandler.isValidHumanoid(model) then
+            local player = Services.Players:GetPlayerFromCharacter(model)
+            if player and not table.find(potentialPlayers, model) and not table.find(ignoreList, player) then
+                table.insert(potentialPlayers, model)
+            end
+        end
+    end
+
+    return potentialPlayers
+end
+
 -- Player Management
 function HumanoidHandler.setupPlayerTracking()
     table.clear(Cache.Players)
     
-    -- Add existing players
-    for _, player in ipairs(Services.Players:GetPlayers()) do
-        if player.Character and HumanoidHandler.isValidHumanoid(player.Character) then
-            Cache.Players[player.Name] = player.Character
+    -- Initial population with advanced detection
+    for _, character in pairs(DetectPlayers()) do
+        local player = Services.Players:GetPlayerFromCharacter(character)
+        if player then
+            Cache.Players[player.Name] = character
         end
     end
     
@@ -85,18 +154,19 @@ function HumanoidHandler.updateNPCCache()
     end
     
     local newCache = {}
+    local detectedPlayers = DetectPlayers()
     
     -- Scan workspace for humanoids
     for _, instance in ipairs(workspace:GetDescendants()) do
         if instance:IsA("Humanoid") then
             local model = instance.Parent
-            
-            -- Validate and ensure it's not a player
-            if HumanoidHandler.isValidHumanoid(model) 
-            and not Services.Players:GetPlayerFromCharacter(model) then
-                local info = HumanoidHandler.getHumanoidInfo(model)
-                if info then
-                    newCache[info.DisplayName] = model
+            if HumanoidHandler.isValidHumanoid(model) then
+                -- Exclude detected players
+                if not table.find(detectedPlayers, model) then
+                    local info = HumanoidHandler.getHumanoidInfo(model)
+                    if info then
+                        newCache[info.DisplayName] = model
+                    end
                 end
             end
         end
@@ -110,8 +180,14 @@ end
 -- Public Interface
 function HumanoidHandler.getValidPlayers()
     local valid = {}
-    for name, character in pairs(Cache.Players) do
+    for _, character in pairs(Cache.Players) do
         if HumanoidHandler.isValidHumanoid(character) then
+            table.insert(valid, character)
+        end
+    end
+    -- Supplement with real-time detection
+    for _, character in pairs(DetectPlayers()) do
+        if HumanoidHandler.isValidHumanoid(character) and not table.find(valid, character) then
             table.insert(valid, character)
         end
     end
@@ -125,7 +201,7 @@ end
 function HumanoidHandler.getAllValidHumanoids()
     local humanoids = {}
     
-    -- Add valid players
+    -- Add valid players with advanced detection
     for _, character in pairs(HumanoidHandler.getValidPlayers()) do
         table.insert(humanoids, character)
     end
